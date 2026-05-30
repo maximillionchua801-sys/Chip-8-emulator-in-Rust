@@ -1,3 +1,5 @@
+use std::path::Component::ParentDir;
+
 use rand::random;
 pub const VIDEO_WIDTH: usize = 64;
 pub const VIDEO_HEIGHT: usize = 32;
@@ -101,6 +103,26 @@ impl Memory {
             },
 
             _ => {}
+        }
+    }
+    //fetch,decode, execute
+    pub fn cycle(&mut self) {
+        //fetch
+        self.opcode = ((self.mem[self.program_counter as usize] as u16) << 8)
+            | (self.mem[(self.program_counter + 1) as usize] as u16);
+
+        //update our program counter
+        self.program_counter += 2;
+
+        //decode and execute
+        self.execute_opcode();
+
+        if (self.delay_timer > 0) {
+            self.delay_timer -= 1;
+        }
+
+        if (self.sound_timer > 0) {
+            self.sound_timer -= 1;
         }
     }
     //CLS clear graphics
@@ -363,25 +385,25 @@ impl Memory {
     }
     //LD DT, Vx
     //Set delay timer = Vx.
-    fn op_Fx15(&mut self){
+    fn op_Fx15(&mut self) {
         let vx: u8 = ((self.opcode & 0x0F00) >> 8) as u8;
         self.delay_timer = self.register[vx as usize];
     }
     // LD ST, Vx
     //Set Sound Timer = Vx.
-    fn op_Fx18(&mut self){
+    fn op_Fx18(&mut self) {
         let vx: u8 = ((self.opcode & 0x0F00) >> 8) as u8;
         self.sound_timer = self.register[vx as usize];
     }
     //ADD I, Vx
     // Set I = I + Vx
-    fn op_Fx1E(&mut self){
+    fn op_Fx1E(&mut self) {
         let vx: u8 = ((self.opcode & 0x0F00) >> 8) as u8;
         self.index_reg += self.register[vx as usize] as u16;
     }
     // LD F, Vx
     //Set I = location of sprite for digit Vx
-    fn op_Fx29(&mut self){
+    fn op_Fx29(&mut self) {
         let vx: u8 = ((self.opcode & 0x0F00) >> 8) as u8;
         let digit = self.register[vx as usize];
         self.index_reg = (FONTSET_START_ADDRESS as u16 + (5 * digit as u16));
@@ -390,10 +412,10 @@ impl Memory {
     //Store BCD representation of Vx in memory locations I, I+1, and I+2
     //The interpreter takes the decimal value of Vx, and places the hundreds digit in memory at location in I,
     // the tens digit at location I+1, and the ones digit at location I+2.
-    fn op_Fx33(&mut self){
+    fn op_Fx33(&mut self) {
         let vx: u8 = ((self.opcode & 0x0F00) >> 8) as u8;
         let mut value = self.register[vx as usize];
-       
+
         self.mem[(self.index_reg + 2 as u16) as usize] = value % 10;
         value /= 10;
 
@@ -401,24 +423,21 @@ impl Memory {
         value /= 10;
 
         self.mem[self.index_reg as usize] = value % 10;
-
     }
     //LD [I], Vx
     //Store registers V0 through Vx in memory starting at location I
-    fn op_Fx55(&mut self){
+    fn op_Fx55(&mut self) {
         let vx: u8 = ((self.opcode & 0x0F00) >> 8) as u8;
-        for i in 0..vx{
+        for i in 0..vx {
             self.mem[(self.index_reg + i as u16) as usize] = self.register[i as usize];
         }
     }
     //LD Vx, [I]
     // Read registers V0 through Vx from memory starting at location I.
-     fn op_Fx65(&mut self){
+    fn op_Fx65(&mut self) {
         let vx: u8 = ((self.opcode & 0x0F00) >> 8) as u8;
-        for i in 0..vx{
-           self.register[i as usize] = self.mem[(self.index_reg + i as u16) as usize]
+        for i in 0..vx {
+            self.register[i as usize] = self.mem[(self.index_reg + i as u16) as usize]
         }
     }
-
-
 }
