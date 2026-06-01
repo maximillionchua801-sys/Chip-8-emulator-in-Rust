@@ -7,7 +7,6 @@ impl rom {
     }
     pub fn load(path: &str) -> Self {
         let data = std::fs::read(path).expect("failed to load ROM");
-        
         Self { data }
     }
 }

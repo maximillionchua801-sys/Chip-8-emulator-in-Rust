@@ -1,6 +1,8 @@
+use rand::random;
+use std::num::Wrapping;
 use std::path::Component::ParentDir;
 
-use rand::random;
+use crate::KEY_MAP;
 pub const VIDEO_WIDTH: usize = 64;
 pub const VIDEO_HEIGHT: usize = 32;
 const FONTSET_START_ADDRESS: usize = 0x50;
@@ -19,7 +21,7 @@ pub struct Memory {
     pub program_counter: u16,
     //16 level stack
     //the stack stores return addresses so the program knows where to continue after a function call.
-    pub stack: Vec<u16>,
+    pub stack: [u16; 16],
     //Stack pointer basically just keeps track on which register we are in on the top of the stack.
     pub stack_pointer: u8,
     //The CHIP-8 has a simple timer used for timing. If the timer value is zero, it stays zero. If it is loaded with a value, it will decrement at a rate of 60Hz.
@@ -41,8 +43,8 @@ impl Memory {
             mem: [0; 4096],
             register: [0; 16],
             index_reg: 0,
-            program_counter: 0,
-            stack: Vec::new(),
+            program_counter: 0x200,
+            stack: [0; 16],
             stack_pointer: 0,
             delay_timer: 0,
             sound_timer: 0,
@@ -116,7 +118,7 @@ impl Memory {
 
         //decode and execute
         self.execute_opcode();
-
+        println!("{:04X}", self.opcode);
         if (self.delay_timer > 0) {
             self.delay_timer -= 1;
         }
@@ -125,6 +127,12 @@ impl Memory {
             self.sound_timer -= 1;
         }
     }
+   pub fn input(&mut self,window: &minifb::Window){
+    for i in 0..16{
+        self.input_key[i] = window.is_key_down(KEY_MAP[i]);
+        }
+    }
+
     //CLS clear graphics
     fn op_00E0(&mut self) {
         self.graphics.fill(false)
@@ -148,9 +156,11 @@ impl Memory {
     }
     // SE Vx, byte - Skip next instruction if Vx = kk.
     fn op_3xkk(&mut self) {
-        let address: u16 = self.opcode & 0x0FFF;
-        self.stack[self.stack_pointer as usize] = self.program_counter;
-        self.program_counter = address;
+        let vx: u8 = ((self.opcode & 0x0F00) >> 8) as u8;
+        let byte: u8 = (self.opcode & 0x00FF) as u8;
+        if (self.register[vx as usize] == byte) {
+            self.program_counter += 2;
+        }
     }
     // SNE Vx, byte - Skip next instruction if Vx != KK.
     fn op_4xkk(&mut self) {
@@ -179,7 +189,7 @@ impl Memory {
     fn op_7xkk(&mut self) {
         let vx: u8 = ((self.opcode & 0x0F00) >> 8) as u8;
         let byte: u8 = (self.opcode & 0x00FF) as u8;
-        self.register[vx as usize] += byte;
+        self.register[vx as usize] = self.register[vx as usize].wrapping_add(byte);
     }
     // LD Vx,Vy -Set Vx = Vy.
     fn op_8xy0(&mut self) {
@@ -213,7 +223,6 @@ impl Memory {
         let vx: u8 = ((self.opcode & 0x0F00) >> 8) as u8;
         let vy: u8 = ((self.opcode & 0x00F0) >> 4) as u8;
         let sum = self.register[vx as usize] as u16 + self.register[vy as usize] as u16;
-
         self.register[0xF] = if sum > 0xFF { 1 } else { 0 };
         self.register[vx as usize] = sum as u8;
     }
@@ -222,13 +231,10 @@ impl Memory {
     fn op_8xy5(&mut self) {
         let vx: u8 = ((self.opcode & 0x0F00) >> 8) as u8;
         let vy: u8 = ((self.opcode & 0x00F0) >> 4) as u8;
-        self.register[0xF] = if self.register[vx as usize] > self.register[vy as usize] {
-            1
-        } else {
-            0
-        };
-        self.register[vx as usize] -= self.register[vy as usize]
+        self.register[0xF] = if self.register[vx as usize] > self.register[vy as usize] {  1  } else { 0 };
+        self.register[vx as usize] = self.register[vx as usize].wrapping_sub(self.register[vy as usize]);
     }
+
     // Set Vx = Vx SHR 1
     // If the least-significant bit of Vx is 1,
     // then VF is set to 1, otherwise 0.
@@ -250,7 +256,7 @@ impl Memory {
         } else {
             self.register[0xF] = 0;
         }
-        self.register[vx as usize] = self.register[vy as usize] - self.register[vx as usize];
+        self.register[vx as usize] = self.register[vy as usize].wrapping_sub(self.register[vx as usize]);
     }
     //SHL Vx {, Vy}
     //Set Vx = Vx SHL 1.
@@ -294,31 +300,35 @@ impl Memory {
     //DRW Vx, Vy, nibble
     //Display n-byte sprite starting at memory location I at (Vx, Vy),
     // set VF = collision.
-    fn op_Dxyn(&mut self) {
-        let vx: u8 = ((self.opcode & 0x0F00) >> 8) as u8;
-        let vy: u8 = ((self.opcode & 0x00F0) >> 4) as u8;
-        let height = self.opcode & 0x000F;
+  fn op_Dxyn(&mut self) {
+    let vx = ((self.opcode & 0x0F00) >> 8) as usize;
+    let vy = ((self.opcode & 0x00F0) >> 4) as usize;
+    let height = (self.opcode & 0x000F) as usize;
 
-        let pos_x = self.register[vx as usize] % VIDEO_WIDTH as u8;
-        let pos_y = self.register[vy as usize] % VIDEO_HEIGHT as u8;
+    let x_start = self.register[vx] as usize;
+    let y_start = self.register[vy] as usize;
 
-        self.register[0xF] = 0;
+    self.register[0xF] = 0;
 
-        for row in 0..height {
-            let sprite_byte = self.mem[(self.index_reg + row as u16) as usize];
-            for col in 0..8 {
-                let _sprite_pixel = sprite_byte & (0x80 >> col);
-                let _index =
-                    (pos_y as usize + row as usize) * VIDEO_WIDTH + (pos_x as usize + col as usize);
-                if (_sprite_pixel != 0) {
-                    if self.graphics[_index] {
-                        self.register[0xF] = 1;
-                    }
-                    self.graphics[_index] ^= true;
+    for row in 0..height {
+        let sprite_byte = self.mem[(self.index_reg + row as u16) as usize];
+
+        for col in 0..8 {
+            if sprite_byte & (0x80 >> col) != 0 {
+                let x = (x_start + col) % VIDEO_WIDTH;
+                let y = (y_start + row) % VIDEO_HEIGHT;
+
+                let index = y * VIDEO_WIDTH + x;
+
+                if self.graphics[index] {
+                    self.register[0xF] = 1;
                 }
+
+                self.graphics[index] ^= true;
             }
         }
     }
+}
     //SKP Vx
     //Skip next instruction if key with the value of Vx is pressed.
     fn op_Ex9E(&mut self) {
